@@ -27,7 +27,7 @@ func (c *baseClient) conn() (*pool.Conn, bool, error) {
 		return nil, false, err
 	}
 	if !cn.Inited {
-		if err := c.initConn(cn); err != nil {
+		if err := c.initConn(cn); err != nil && !isNew {
 			_ = c.connPool.Remove(cn, err)
 			return nil, false, err
 		}
@@ -89,17 +89,19 @@ func (c *baseClient) WrapProcess(fn func(oldProcess func(cmd Cmder) error) func(
 
 func (c *baseClient) defaultProcess(cmd Cmder) error {
 	for i := 0; i <= c.opt.MaxRetries; i++ {
-		cn, _, err := c.conn()
+		cn, isNew, err := c.conn()
 		if err != nil {
 			cmd.setErr(err)
-			return err
+			continue
 		}
 
 		cn.SetWriteTimeout(c.opt.WriteTimeout)
 		if err := writeCmd(cn, cmd); err != nil {
-			c.putConn(cn, err, false)
+			if !isNew {
+				c.putConn(cn, err, false)
+			}
 			cmd.setErr(err)
-			if err != nil && internal.IsRetryableError(err) {
+			if internal.IsRetryableError(err) {
 				continue
 			}
 			return err
@@ -107,12 +109,23 @@ func (c *baseClient) defaultProcess(cmd Cmder) error {
 
 		cn.SetReadTimeout(c.cmdTimeout(cmd))
 		err = cmd.readReply(cn)
-		c.putConn(cn, err, false)
-		if err != nil && internal.IsRetryableError(err) {
-			continue
+		if err != nil {
+			if !isNew {
+				c.putConn(cn, err, false)
+			}
+
+			cmd.setErr(err)
+			if internal.IsRetryableError(err) {
+				continue
+			}
+			return err
+		}
+		cmd.setErr(nil)
+		if isNew {
+			c.putConn(cn, nil, false)
 		}
 
-		return err
+		return nil
 	}
 
 	return cmd.Err()

@@ -119,13 +119,17 @@ func (p *ConnPool) PopFree() *Conn {
 }
 
 func (p *ConnPool) popFree() *Conn {
+	p.freeConnsMu.Lock()
+
 	if len(p.freeConns) == 0 {
 		return nil
 	}
 
 	idx := len(p.freeConns) - 1
 	cn := p.freeConns[idx]
+
 	p.freeConns = p.freeConns[:idx]
+	p.freeConnsMu.Unlock()
 	return cn
 }
 
@@ -152,9 +156,7 @@ func (p *ConnPool) Get() (*Conn, bool, error) {
 	}
 
 	for {
-		p.freeConnsMu.Lock()
 		cn := p.popFree()
-		p.freeConnsMu.Unlock()
 
 		if cn == nil {
 			break
